@@ -1,1 +1,86 @@
 # favorites page
+//
+//  ContentView.swift
+//  Final_FavoritesPage
+//
+//  Created by Allyson Bartek on 4/29/26.
+//
+
+import SwiftUI
+import Foundation
+import Supabase
+
+let supabase = SupabaseClient(supabaseURL: URL(string: "https://ekrevjwiiowilnyeller.supabase.co")!, supabaseKey: "sb_publishable_Z64TYRxGpBtnfEyAf27NkQ_nJgsrBXv")
+
+struct Favorite: Codable, Identifiable {
+    let fave_id: Int
+    let user_id: Int
+    let name: String
+    let fave_fit: [String]
+    
+    var id: Int {fave_id}
+}
+
+struct ContentView: View {
+    @State private var favorites: [Favorite] = []
+    
+    @EnvironmentObject var session: SessionManager
+    
+    var body: some View {
+        NavigationStack {
+            ScrollView {
+                LazyVStack(alignment: .leading) {
+                    ForEach(favorites) { fav in
+
+                        VStack(alignment: .leading) {
+                            Text(fav.name)
+
+                            ScrollView(.horizontal, showsIndicators: false) {
+                                HStack {
+                                    ForEach(fav.fave_fit, id: \.self) { item in
+                                        Text(item)
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            .navigationTitle("")
+            .scrollContentBackground(.hidden)
+            .background(Color(red: 242/255, green: 155/255, blue: 185/255)
+                .opacity(0.2)
+            .ignoresSafeArea())
+            .toolbar {
+                ToolbarItem(placement: .principal) {
+                    Text("Favorites")
+                        .foregroundColor(Color(red: 228/255, green: 86/225, blue: 139/255))
+                        .font(.system(size: 40,weight: .heavy, design: .rounded ))
+                }
+            }
+            .task {
+                await fetchFavorites()
+            }
+        }
+    }
+    
+    func fetchFavorites() async {
+        guard let userID = session.userID else {return}
+        do {
+            let response: [Favorite] = try await supabase
+                .from("favorites")
+                .select()
+                .eq("user_id", value: userID)
+                .execute()
+                .value
+            
+            favorites = response
+        } catch {
+            print("Error fetching:", error)
+        }
+    }
+}
+
+#Preview {
+    ContentView()
+}

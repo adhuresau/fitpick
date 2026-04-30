@@ -1,1 +1,426 @@
-# shuffle page
+// shuffle page
+
+import SwiftUI
+import Supabase
+
+// MARK: - Models
+
+struct ClothingItem: Identifiable, Codable {
+    let id: Int
+    let user_id: Int
+    let pic_link: String
+    let category: String   // "top" | "bottom" | "shoes" | "accessories"
+
+    enum CodingKeys: String, CodingKey {
+        case id = "pic_id"
+        case user_id, pic_link, category
+    }
+}
+
+struct FavoriteOutfit: Encodable {
+    let user_id: Int
+    let fave_fit: [String]
+    let name: String
+}
+
+// MARK: - ViewModel
+
+@MainActor
+class ShuffleViewModel: ObservableObject {
+    @Published var tops: [ClothingItem] = []
+    @Published var bottoms: [ClothingItem] = []
+    @Published var shoes: [ClothingItem] = []
+    @Published var accessories: [ClothingItem] = []
+
+    @Published var currentTop: ClothingItem?
+    @Published var currentBottom: ClothingItem?
+    @Published var currentShoes: ClothingItem?
+    @Published var currentAccessory: ClothingItem?
+
+    @Published var topLocked = false
+    @Published var bottomLocked = false
+    @Published var shoesLocked = false
+    @Published var accessoryLocked = false
+
+    @Published var isLoading = false
+    @Published var isSaving = false
+    @Published var savedSuccess = false
+    @Published var showNameSheet = false
+    @Published var outfitName = ""
+    @Published var errorMessage: String?
+
+    var userId: Int
+
+    init(userId: Int) {
+        self.userId = userId
+    }
+
+    func loadClothing() async {
+        isLoading = true
+        errorMessage = nil
+        do {
+            let items: [ClothingItem] = try await supabase
+                .from("Clothing")
+                .select()
+                .eq("user_id", value: userId)
+                .execute()
+                .value
+
+            tops        = items.filter { $0.category == "top" }
+            bottoms     = items.filter { $0.category == "bottom" }
+            shoes       = items.filter { $0.category == "shoes" }
+            accessories = items.filter { $0.category == "accessories" }
+            shuffle()
+        } catch {
+            errorMessage = "Could not load wardrobe: \(error.localizedDescription)"
+        }
+        isLoading = false
+    }
+
+    func shuffle() {
+        if !topLocked       { currentTop       = tops.randomElement() }
+        if !bottomLocked    { currentBottom    = bottoms.randomElement() }
+        if !shoesLocked     { currentShoes     = shoes.randomElement() }
+        if !accessoryLocked { currentAccessory = accessories.randomElement() }
+    }
+
+    func toggleLock(for slot: SlotType) {
+        switch slot {
+        case .top:       topLocked.toggle()
+        case .bottom:    bottomLocked.toggle()
+        case .shoes:     shoesLocked.toggle()
+        case .accessory: accessoryLocked.toggle()
+        }
+    }
+
+    func saveFavorite() async {
+        let links = [
+            currentTop?.pic_link,
+            currentBottom?.pic_link,
+            currentShoes?.pic_link,
+            currentAccessory?.pic_link
+        ].compactMap { $0 }
+
+        guard !links.isEmpty else { return }
+
+        isSaving = true
+        do {
+            let outfit = FavoriteOutfit(
+                user_id: userId,
+                fave_fit: links,
+                name: outfitName.trimmingCharacters(in: .whitespaces)
+            )
+            try await supabase
+                .from("Favorites")
+                .insert(outfit)
+                .execute()
+
+            savedSuccess = true
+            outfitName = ""
+            DispatchQueue.main.asyncAfter(deadline: .now() + 2) {
+                self.savedSuccess = false
+            }
+        } catch {
+            errorMessage = "Could not save favorite: \(error.localizedDescription)"
+        }
+        isSaving = false
+    }
+}
+
+// MARK: - Slot Type
+
+enum SlotType {
+    case top, bottom, shoes, accessory
+    var label: String {
+        switch self {
+        case .top:       return "Top"
+        case .bottom:    return "Bottom"
+        case .shoes:     return "Shoes"
+        case .accessory: return "Accessory"
+        }
+    }
+}
+
+// MARK: - FitPick Colors
+
+extension Color {
+    static let fitPink   = Color(hex: "#E4568B")
+    static let fitYellow = Color(hex: "#F6C94D")
+    static let fitBlue   = Color(hex: "#A7C7E4")
+    static let fitGreen  = Color(hex: "#5D7B3D")
+    static let fitBlush  = Color(hex: "#F29BB9")
+    static let fitBrown  = Color(hex: "#7F5836")
+
+    init(hex: String) {
+        let hex = hex.trimmingCharacters(in: CharacterSet.alphanumerics.inverted)
+        var int: UInt64 = 0
+        Scanner(string: hex).scanHexInt64(&int)
+        let r = Double((int >> 16) & 0xFF) / 255
+        let g = Double((int >> 8)  & 0xFF) / 255
+        let b = Double( int        & 0xFF) / 255
+        self.init(red: r, green: g, blue: b)
+    }
+}
+
+// MARK: - Clothing Slot View
+
+struct ClothingSlotView: View {
+    let item: ClothingItem?
+    let slot: SlotType
+    let locked: Bool
+    let onTap: () -> Void
+
+    private var accentColor: Color {
+        switch slot {
+        case .top:       return .fitPink
+        case .bottom:    return .fitYellow
+        case .shoes:     return .fitBlue
+        case .accessory: return .fitGreen
+        }
+    }
+
+    var body: some View {
+        ZStack(alignment: .topTrailing) {
+            ZStack {
+                Group {
+                    if let urlString = item?.pic_link, let url = URL(string: urlString) {
+                        AsyncImage(url: url) { phase in
+                            switch phase {
+                            case .success(let image):
+                                image.resizable().scaledToFill()
+                            case .failure(_):
+                                placeholderView
+                            case .empty:
+                                ProgressView()
+                                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                            @unknown default:
+                                placeholderView
+                            }
+                        }
+                    } else {
+                        placeholderView
+                    }
+                }
+                .frame(width: 150, height: 150)
+                .clipShape(RoundedRectangle(cornerRadius: 18))
+                .overlay(
+                    RoundedRectangle(cornerRadius: 18)
+                        .stroke(locked ? accentColor : Color.clear, lineWidth: 4)
+                )
+
+                VStack {
+                    Spacer()
+                    HStack {
+                        Text(slot.label)
+                            .font(.subheadline)
+                            .fontWeight(.semibold)
+                            .foregroundColor(.white)
+                            .padding(.horizontal, 10)
+                            .padding(.vertical, 5)
+                            .background(accentColor.opacity(0.85))
+                            .clipShape(Capsule())
+                            .padding(10)
+                        Spacer()
+                    }
+                }
+                .frame(width: 150, height: 150)
+            }
+
+            if locked {
+                Image(systemName: "lock.fill")
+                    .font(.subheadline)
+                    .padding(8)
+                    .background(accentColor)
+                    .foregroundColor(.white)
+                    .clipShape(Circle())
+                    .offset(x: 6, y: -6)
+            }
+        }
+        .frame(maxWidth: .infinity)
+        .onTapGesture { onTap() }
+    }
+
+    private var placeholderView: some View {
+        ZStack {
+            accentColor.opacity(0.15)
+            VStack(spacing: 6) {
+                Image(systemName: slotIcon)
+                    .font(.largeTitle)
+                    .foregroundColor(accentColor.opacity(0.6))
+                Text("No \(slot.label)")
+                    .font(.caption)
+                    .foregroundColor(accentColor.opacity(0.7))
+            }
+        }
+    }
+
+    private var slotIcon: String {
+        switch slot {
+        case .top:       return "tshirt"
+        case .bottom:    return "rectangle.portrait"
+        case .shoes:     return "shoeprints.fill"
+        case .accessory: return "sparkles"
+        }
+    }
+}
+
+// MARK: - Shuffle Page
+
+struct ShufflePage: View {
+    @StateObject private var vm: ShuffleViewModel
+
+    init(userId: Int) {
+        _vm = StateObject(wrappedValue: ShuffleViewModel(userId: userId))
+    }
+
+    var body: some View {
+        ZStack {
+            Color(hex: "#ffdee9").ignoresSafeArea()
+
+            if vm.isLoading {
+                VStack(spacing: 16) {
+                    ProgressView().scaleEffect(1.4).tint(.fitPink)
+                    Text("Loading your wardrobe...")
+                        .font(.subheadline)
+                        .foregroundColor(.fitPink)
+                }
+            } else {
+                mainContent
+            }
+        }
+        .task { await vm.loadClothing() }
+        .sheet(isPresented: $vm.showNameSheet) { nameSheet }
+        .alert("Error", isPresented: Binding(
+            get: { vm.errorMessage != nil },
+            set: { if !$0 { vm.errorMessage = nil } }
+        )) {
+            Button("OK") { vm.errorMessage = nil }
+        } message: {
+            Text(vm.errorMessage ?? "")
+        }
+    }
+
+    // MARK: Name Sheet
+    private var nameSheet: some View {
+        VStack(spacing: 24) {
+            Text("Name this outfit")
+                .font(.title2)
+                .fontWeight(.bold)
+                .foregroundColor(.fitBrown)
+
+            TextField("e.g. Sunday Brunch", text: $vm.outfitName)
+                .textFieldStyle(.roundedBorder)
+                .padding(.horizontal)
+
+            HStack(spacing: 16) {
+                Button("Cancel") {
+                    vm.showNameSheet = false
+                    vm.outfitName = ""
+                }
+                .frame(maxWidth: .infinity)
+                .padding()
+                .background(Color(.systemGray5))
+                .foregroundColor(.primary)
+                .clipShape(RoundedRectangle(cornerRadius: 14))
+
+                Button {
+                    vm.showNameSheet = false
+                    Task { await vm.saveFavorite() }
+                } label: {
+                    Group {
+                        if vm.isSaving {
+                            ProgressView().tint(.white)
+                        } else {
+                            Label("Save", systemImage: "star.fill").font(.headline)
+                        }
+                    }
+                }
+                .frame(maxWidth: .infinity)
+                .padding()
+                .background(Color.fitGreen)
+                .foregroundColor(.white)
+                .clipShape(RoundedRectangle(cornerRadius: 14))
+                .disabled(vm.isSaving)
+            }
+            .padding(.horizontal)
+        }
+        .padding(.top, 32)
+        .presentationDetents([.height(220)])
+    }
+
+    // MARK: Main Content
+    private var mainContent: some View {
+        ScrollView {
+            VStack(spacing: 16) {
+                Text("FitPick")
+                    .font(.system(size: 36, weight: .bold, design: .rounded))
+                    .foregroundColor(.fitBrown)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(.horizontal)
+                    .padding(.top, 16)
+
+                Text("Tap a slot to lock it, then reshuffle the rest")
+                    .font(.footnote)
+                    .foregroundColor(.secondary)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(.horizontal)
+
+                VStack(spacing: 14) {
+                    ClothingSlotView(item: vm.currentTop, slot: .top, locked: vm.topLocked) {
+                        vm.toggleLock(for: .top)
+                    }
+                    ClothingSlotView(item: vm.currentBottom, slot: .bottom, locked: vm.bottomLocked) {
+                        vm.toggleLock(for: .bottom)
+                    }
+                    ClothingSlotView(item: vm.currentShoes, slot: .shoes, locked: vm.shoesLocked) {
+                        vm.toggleLock(for: .shoes)
+                    }
+                    ClothingSlotView(item: vm.currentAccessory, slot: .accessory, locked: vm.accessoryLocked) {
+                        vm.toggleLock(for: .accessory)
+                    }
+                }
+                .padding(.horizontal)
+
+                VStack(spacing: 12) {
+                    Button {
+                        withAnimation(.spring(response: 0.3, dampingFraction: 0.6)) {
+                            vm.shuffle()
+                        }
+                    } label: {
+                        Label("Shuffle", systemImage: "shuffle")
+                            .font(.headline)
+                            .frame(maxWidth: .infinity)
+                            .padding()
+                            .background(Color.fitPink)
+                            .foregroundColor(.white)
+                            .clipShape(RoundedRectangle(cornerRadius: 14))
+                    }
+
+                    Button { vm.showNameSheet = true } label: {
+                        Group {
+                            if vm.savedSuccess {
+                                Label("Saved!", systemImage: "checkmark").font(.headline)
+                            } else {
+                                Label("Save to Favorites", systemImage: "star.fill").font(.headline)
+                            }
+                        }
+                        .frame(maxWidth: .infinity)
+                        .padding()
+                        .background(vm.savedSuccess ? Color.fitGreen.opacity(0.7) : Color.fitGreen)
+                        .foregroundColor(.white)
+                        .clipShape(RoundedRectangle(cornerRadius: 14))
+                        .animation(.easeInOut(duration: 0.2), value: vm.savedSuccess)
+                    }
+                }
+                .padding(.horizontal)
+                .padding(.bottom, 40)
+            }
+        }
+    }
+}
+
+// MARK: - Preview
+
+#Preview {
+    ShufflePage(userId: 1)
+}

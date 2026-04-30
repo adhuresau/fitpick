@@ -37,7 +37,7 @@ struct ContentView: View {
 
                             ScrollView(.horizontal, showsIndicators: false) {
                                 HStack {
-                                    ForEach(fav.fave_fit, id: \.self) { item in
+                                    ForEach(fav.fave_fit, id: \.self) { item in //CHANGE TO IMAGE AFTER HOME PAGE DONE
                                         Text(item)
                                     }
                                 }

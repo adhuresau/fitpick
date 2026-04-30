@@ -1,0 +1,294 @@
+import SwiftUI
+import Supabase
+
+// MARK: Models
+
+struct User: Codable {
+    let id: Int?
+    let username: String
+    let password: String
+}
+
+struct NewUser: Encodable {
+    let username: String
+    let password: String
+}
+
+// MARK: View
+
+struct ContentView: View {
+
+    @State private var username = ""
+    @State private var password = ""
+
+    @State private var loading = false
+
+    @State private var showAlert = false
+    @State private var alertMessage = ""
+
+    @EnvironmentObject var session: SessionManager
+
+    var body: some View {
+
+        if session.isLoggedIn {
+            HomeView()
+        } else {
+
+            ZStack {
+                RadialGradient(
+                    colors: [
+                        Color(red: 228/255, green: 86/255, blue: 139/255),
+                        Color(red: 242/255, green: 155/255, blue: 185/255),
+                        Color(red: 246/255, green: 201/255, blue: 77/255),
+                        Color(red: 167/255, green: 199/255, blue: 228/255),
+                        Color(red: 93/255, green: 123/255, blue: 61/255)
+                    ],
+                    center: .center,
+                    startRadius: 20,
+                    endRadius: 500
+                )
+                .ignoresSafeArea()
+
+                VStack(spacing: 28) {
+
+                    Spacer()
+
+                    Text("FitPick")
+                        .font(.system(size: 54, weight: .heavy))
+                        .foregroundColor(Color(red: 127/255, green: 88/255, blue: 54/255))
+
+                    Text("Login or Create Account")
+                        .font(.title3)
+                        .foregroundColor(.white.opacity(0.9))
+
+                    VStack(spacing: 18) {
+
+                        TextField("Username", text: $username)
+                            .textFieldStyle(.roundedBorder)
+                            .textInputAutocapitalization(.never)
+
+                        SecureField("Password", text: $password)
+                            .textFieldStyle(.roundedBorder)
+                    }
+                    .padding(.horizontal,30)
+
+                    HStack(spacing: 18) {
+
+                        Button {
+                            Task {
+                                await login()
+                            }
+                        } label: {
+                            if loading {
+                                ProgressView()
+                            } else {
+                                Text("Login")
+                                    .bold()
+                                    .frame(maxWidth: .infinity)
+                            }
+                        }
+                        .customButtonStyle()
+
+                        Button {
+                            Task {
+                                await signUp()
+                            }
+                        } label: {
+                            Text("Sign Up")
+                                .bold()
+                                .frame(maxWidth: .infinity)
+                        }
+                        .customButtonStyle()
+                    }
+                    .padding(.horizontal,30)
+
+                    Spacer()
+                }
+            }
+            .alert("Error", isPresented: $showAlert) {
+                Button("OK"){}
+            } message: {
+                Text(alertMessage)
+            }
+        }
+    }
+}
+
+// MARK: Auth
+
+extension ContentView {
+
+    func login() async {
+
+        guard validateFields() else { return }
+
+        await setLoading(true)
+
+        do {
+
+            let response = try await supabase
+                .from("users")
+                .select()
+                .eq("username", value: username)
+                .eq("password", value: password)
+                .limit(1)
+                .execute()
+
+            let users = try JSONDecoder()
+                .decode([User].self, from: response.data)
+
+            await setLoading(false)
+
+            if users.isEmpty {
+                await showError("Invalid username or password")
+            } else {
+                await MainActor.run {
+                    session.userID = users.first?.id
+                    session.isLoggedIn = true
+                }
+            }
+
+        } catch {
+
+            await setLoading(false)
+            await showError(error.localizedDescription)
+        }
+    }
+
+
+    func signUp() async {
+
+        guard validateFields() else { return }
+
+        await setLoading(true)
+
+        do {
+            // Check if username exists
+
+            let check = try await supabase
+                .from("users")
+                .select()
+                .eq("username", value: username)
+                .limit(1)
+                .execute()
+
+            let existing = try JSONDecoder()
+                .decode([User].self, from: check.data)
+
+            if !existing.isEmpty {
+                await setLoading(false)
+                await showError("Username already exists")
+                return
+            }
+
+            // Insert user
+
+            let newUser = NewUser(
+                username: username,
+                password: password
+            )
+
+            let response: User = try await supabase
+                .from("users")
+                .insert(newUser)
+                .select()
+                .single()
+                .execute()
+                .value
+
+            await setLoading(false)
+
+            await MainActor.run {
+                session.userID = response.id
+                session.isLoggedIn = true
+            }
+
+        } catch {
+
+            await setLoading(false)
+            await showError(error.localizedDescription)
+        }
+    }
+}
+
+// MARK: Helpers
+
+extension ContentView {
+
+    func validateFields() -> Bool {
+
+        if username.trimmingCharacters(in: .whitespaces).isEmpty ||
+            password.isEmpty {
+
+            Task {
+                await showError("Enter username and password")
+            }
+
+            return false
+        }
+
+        return true
+    }
+
+    func showError(_ message: String) async {
+        await MainActor.run {
+            alertMessage = message
+            showAlert = true
+        }
+    }
+
+    func setLoading(_ value: Bool) async {
+        await MainActor.run {
+            loading = value
+        }
+    }
+}
+
+// MARK: Button Style
+
+struct MainButton: ButtonStyle {
+
+    func makeBody(configuration: Configuration) -> some View {
+
+        configuration.label
+            .padding()
+            .background(.white)
+            .foregroundColor(.black)
+            .cornerRadius(18)
+            .scaleEffect(configuration.isPressed ? 0.96 : 1)
+    }
+}
+
+extension View {
+    func customButtonStyle() -> some View {
+        self
+            .padding()
+            .frame(maxWidth: .infinity)
+            .background(Color(red: 167/255, green: 199/255, blue: 228/255))
+            .foregroundColor(.white)
+            .font(.title2)
+            .cornerRadius(20)
+            .bold()
+    }
+}
+
+// MARK: Dummy Home Screen
+
+struct HomeView: View {
+
+    var body: some View {
+        ZStack {
+            Color.green.opacity(0.2)
+                .ignoresSafeArea()
+
+            Text("Logged In!")
+                .font(.largeTitle.bold())
+        }
+    }
+}
+
+// MARK: - Preview
+
+#Preview {
+    ContentView()
+}

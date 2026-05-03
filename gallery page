@@ -1,1 +1,267 @@
-# gallery page
+//
+//  galleryView.swift
+//  fitpick
+//
+//  Created by Deja Brown on 4/28/26.
+//
+
+import SwiftUI
+import PhotosUI
+import Supabase
+
+//used for inserting a new row
+struct NewClothingItem: Encodable {
+    let user_id: Int
+    let pic_link: String
+    let category: String
+}
+
+//gallery view
+
+struct GalleryView: View {
+    @EnvironmentObject var session: SessionManager
+
+    @State private var clothingItems: [ClothingItem] = []
+    @State private var selectedPhoto: PhotosPickerItem?
+    @State private var selectedCategory = "top"
+    @State private var itemName = ""
+
+    @State private var isUploading = false
+    @State private var errorMessage: String?
+    @State private var showError = false
+
+    let categories = ["top", "bottom", "shoes", "accessories"]
+
+    let columns = [GridItem(.flexible()), GridItem(.flexible())]
+
+    var body: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 22) {
+
+                VStack(alignment: .leading, spacing: 8) {
+                    Text("My Gallery")
+                        .font(.system(size: 36, weight: .bold, design: .rounded))
+                        .foregroundColor(.cocoaBrown)
+
+                    Text("Add your closet pieces and build your perfect fit.")
+                        .font(.subheadline)
+                        .foregroundColor(.leaflitGreen)
+                }
+                .padding(.horizontal)
+
+                addClothingSection
+
+                if clothingItems.isEmpty {
+                    VStack(spacing: 10) {
+                        Image(systemName: "tshirt")
+                            .font(.system(size: 48))
+                            .foregroundColor(.eveningSky.opacity(0.5))
+                        Text("No items yet — add your first piece!")
+                            .font(.subheadline)
+                            .foregroundColor(.cocoaBrown.opacity(0.5))
+                    }
+                    .frame(maxWidth: .infinity)
+                    .padding(.top, 40)
+                } else {
+                    LazyVGrid(columns: columns, spacing: 18) {
+                        ForEach(clothingItems) { item in
+                            ClothingCardView(item: item) {
+                                Task { await deleteItem(item) }
+                            }
+                        }
+                    }
+                    .padding(.horizontal)
+                }
+            }
+            .padding(.vertical)
+        }
+        .background(
+            LinearGradient(
+                colors: [.eveningSky.opacity(0.35), .rosebudBlush.opacity(0.18)],
+                startPoint: .top,
+                endPoint: .bottom
+            )
+        )
+        .navigationTitle("Gallery")
+        .navigationBarTitleDisplayMode(.inline)
+        .task { await fetchItems() }
+        .alert("Error", isPresented: $showError) {
+            Button("OK") {}
+        } message: {
+            Text(errorMessage ?? "Something went wrong.")
+        }
+    }
+
+    //add clothing section
+
+    var addClothingSection: some View {
+        VStack(spacing: 14) {
+            TextField("Item name, e.g. Pink sweater", text: $itemName)
+                .padding()
+                .background(Color.white)
+                .cornerRadius(14)
+                .foregroundColor(.cocoaBrown)
+
+            Picker("Category", selection: $selectedCategory) {
+                ForEach(categories, id: \.self) { cat in
+                    Text(cat.capitalized).tag(cat)
+                }
+            }
+            .pickerStyle(.segmented)
+
+            PhotosPicker(selection: $selectedPhoto, matching: .images) {
+                HStack {
+                    if isUploading {
+                        ProgressView().tint(.white)
+                    } else {
+                        Image(systemName: "plus.circle.fill")
+                    }
+                    Text(isUploading ? "Uploading..." : "Add Clothing Photo")
+                }
+                .fontWeight(.bold)
+                .frame(maxWidth: .infinity)
+                .padding()
+                .background(isUploading ? Color.sunsetPetal.opacity(0.6) : Color.sunsetPetal)
+                .foregroundColor(.white)
+                .cornerRadius(18)
+            }
+            .disabled(isUploading)
+            .onChange(of: selectedPhoto) { newItem in
+                guard let newItem else { return }
+                Task { await uploadPhoto(newItem) }
+            }
+        }
+        .padding()
+        .background(Color.white.opacity(0.85))
+        .cornerRadius(24)
+        .shadow(color: .cocoaBrown.opacity(0.2), radius: 6, x: 0, y: 4)
+        .padding(.horizontal)
+    }
+
+    //fetch items
+
+    func fetchItems() async {
+        guard let userID = session.userID else { return }
+        do {
+            let items: [ClothingItem] = try await supabase
+                .from("Clothing")
+                .select()
+                .eq("user_id", value: userID)
+                .execute()
+                .value
+            clothingItems = items
+        } catch {
+            showErrorMessage("Could not load items: \(error.localizedDescription)")
+        }
+    }
+
+    //upload hhoto
+
+    func uploadPhoto(_ pickerItem: PhotosPickerItem) async {
+        guard let userID = session.userID else { return }
+        guard let data = try? await pickerItem.loadTransferable(type: Data.self) else {
+            showErrorMessage("Could not read the selected photo.")
+            return
+        }
+
+        isUploading = true
+
+        do {
+            let fileName = "\(userID)/\(Date().timeIntervalSince1970).jpg"
+
+            try await supabase.storage
+                .from("clothing-images")
+                .upload(fileName, data: data, options: .init(contentType: "image/jpeg"))
+
+            let publicURL = try supabase.storage
+                .from("clothing-images")
+                .getPublicURL(path: fileName)
+
+            let newItem = NewClothingItem(
+                user_id: userID,
+                pic_link: publicURL.absoluteString,
+                category: selectedCategory
+            )
+
+            let saved: ClothingItem = try await supabase
+                .from("Clothing")
+                .insert(newItem)
+                .select()
+                .single()
+                .execute()
+                .value
+
+            clothingItems.append(saved)
+            itemName = ""
+            selectedPhoto = nil
+
+        } catch {
+            showErrorMessage("Upload failed: \(error.localizedDescription)")
+        }
+
+        isUploading = false
+    }
+
+    //delete item
+
+    func deleteItem(_ item: ClothingItem) async {
+        do {
+            try await supabase
+                .from("Clothing")
+                .delete()
+                .eq("pic_id", value: item.pic_id)
+                .execute()
+            clothingItems.removeAll { $0.pic_id == item.pic_id }
+        } catch {
+            showErrorMessage("Could not delete item: \(error.localizedDescription)")
+        }
+    }
+
+    func showErrorMessage(_ msg: String) {
+        errorMessage = msg
+        showError = true
+    }
+}
+
+//clothing card view
+
+struct ClothingCardView: View {
+    let item: ClothingItem
+    let onDelete: () -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 9) {
+            AsyncImage(url: URL(string: item.pic_link)) { image in
+                image
+                    .resizable()
+                    .scaledToFill()
+            } placeholder: {
+                ZStack {
+                    Color.eveningSky.opacity(0.25)
+                    ProgressView()
+                }
+            }
+            .frame(height: 165)
+            .frame(maxWidth: .infinity)
+            .clipped()
+            .cornerRadius(18)
+
+            Text(item.category.capitalized)
+                .font(.headline)
+                .foregroundColor(.cocoaBrown)
+                .lineLimit(1)
+
+            Button(role: .destructive) {
+                onDelete()
+            } label: {
+                Label("Remove", systemImage: "trash")
+                    .font(.caption)
+                    .fontWeight(.semibold)
+            }
+        }
+        .padding()
+        .background(Color.white.opacity(0.92))
+        .cornerRadius(22)
+        .shadow(color: .cocoaBrown.opacity(0.18), radius: 5, x: 0, y: 3)
+    }
+}

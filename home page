@@ -1,1 +1,137 @@
 # home page
+//
+//  homeView.swift
+//  fitpick
+//
+//  Created by Deja Brown on 4/28/26.
+//
+import SwiftUI
+
+extension Color {
+    static let sunsetPetal = Color(red: 228/255, green: 86/255, blue: 139/255)
+    static let goldenPollen = Color(red: 246/255, green: 201/255, blue: 77/255)
+    static let eveningSky = Color(red: 167/255, green: 199/255, blue: 228/255)
+    static let leaflitGreen = Color(red: 93/255, green: 123/255, blue: 61/255)
+    static let rosebudBlush = Color(red: 242/255, green: 155/255, blue: 185/255)
+    static let cocoaBrown = Color(red: 127/255, green: 88/255, blue: 54/255)
+}
+
+struct HomeView: View {
+    @EnvironmentObject var session: SessionManager
+
+    var body: some View {
+        NavigationStack {
+            ZStack {
+                RadialGradient(
+                    colors: [
+                        Color(red: 228/255, green: 86/255, blue: 139/255),
+                        Color(red: 242/255, green: 155/255, blue: 185/255),
+                        Color(red: 246/255, green: 201/255, blue: 77/255),
+                        Color(red: 167/255, green: 199/255, blue: 228/255),
+                        Color(red: 93/255, green: 123/255, blue: 61/255)
+                    ],
+                    center: .center,
+                    startRadius: 20,
+                    endRadius: 500
+                )
+                .ignoresSafeArea()
+
+                VStack(spacing: 28) {
+                    Spacer()
+
+                    VStack(spacing: 12) {
+                        Image("fitpick_icon")
+                            .resizable()
+                            .scaledToFit()
+                            .frame(width: 115, height: 115)
+                            .clipShape(RoundedRectangle(cornerRadius: 28))
+                            .shadow(radius: 6)
+
+                        Text("FitPick")
+                            .font(.system(size: 46, weight: .bold, design: .rounded))
+                            .foregroundColor(.cocoaBrown)
+                    }
+
+                    VStack(spacing: 16) {
+                        NavigationLink {
+                            ShuffleView()
+                        } label: {
+                            HomeButtonLabel(
+                                title: "Make Your Outfit",
+                                systemImage: "sparkles",
+                                backgroundColor: .sunsetPetal,
+                                textColor: .white
+                            )
+                        }
+
+                        NavigationLink {
+                            GalleryView()
+                                .environmentObject(session)
+                        } label: {
+                            HomeButtonLabel(
+                                title: "My Gallery",
+                                systemImage: "photo.on.rectangle",
+                                backgroundColor: .goldenPollen,
+                                textColor: .cocoaBrown
+                            )
+                        }
+
+                        NavigationLink {
+                            FavoritesView()
+                        } label: {
+                            HomeButtonLabel(
+                                title: "Favorite Outfits",
+                                systemImage: "heart.fill",
+                                backgroundColor: .leaflitGreen,
+                                textColor: .white
+                            )
+                        }
+                    }
+                    .padding(.horizontal, 28)
+
+                    Spacer()
+
+                    Button {
+                        session.userID = nil
+                        session.isLoggedIn = false
+                    } label: {
+                        Label("Log Out", systemImage: "rectangle.portrait.and.arrow.right")
+                            .font(.subheadline)
+                            .foregroundColor(.white.opacity(0.8))
+                    }
+                    .padding(.bottom, 12)
+                }
+            }
+            .toolbar(.hidden, for: .navigationBar)
+        }
+    }
+}
+
+struct HomeButtonLabel: View {
+    let title: String
+    let systemImage: String
+    let backgroundColor: Color
+    let textColor: Color
+
+    var body: some View {
+        HStack {
+            Image(systemName: systemImage)
+                .font(.title3)
+
+            Text(title)
+                .font(.headline)
+                .fontWeight(.semibold)
+
+            Spacer()
+
+            Image(systemName: "chevron.right")
+                .font(.caption)
+        }
+        .foregroundColor(textColor)
+        .padding()
+        .frame(maxWidth: .infinity)
+        .background(backgroundColor)
+        .cornerRadius(20)
+        .shadow(color: .cocoaBrown.opacity(0.25), radius: 5, x: 0, y: 3)
+    }
+}

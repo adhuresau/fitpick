@@ -253,7 +253,7 @@ struct ShuffleView: View {
             }
         }
         // Title sits right beside the back button in the nav bar
-        .navigationTitle("FitPick")
+        .navigationTitle("Pick Your Fit")
         .navigationBarTitleDisplayMode(.inline)
         .toolbarBackground(Color(red: 1.0, green: 0.87, blue: 0.914), for: .navigationBar)
         .toolbarBackground(.visible, for: .navigationBar)

@@ -1,21 +1,9 @@
 // shuffle page
-
 import SwiftUI
 import Supabase
+import Combine
 
 // MARK: - Models
-
-struct ClothingItem: Identifiable, Codable {
-    let id: Int
-    let user_id: Int
-    let pic_link: String
-    let category: String   // "top" | "bottom" | "shoes" | "accessories"
-
-    enum CodingKeys: String, CodingKey {
-        case id = "pic_id"
-        case user_id, pic_link, category
-    }
-}
 
 struct FavoriteOutfit: Encodable {
     let user_id: Int
@@ -60,7 +48,7 @@ class ShuffleViewModel: ObservableObject {
         errorMessage = nil
         do {
             let items: [ClothingItem] = try await supabase
-                .from("Clothing")
+                .from("clothing")
                 .select()
                 .eq("user_id", value: userId)
                 .execute()
@@ -111,7 +99,7 @@ class ShuffleViewModel: ObservableObject {
                 name: outfitName.trimmingCharacters(in: .whitespaces)
             )
             try await supabase
-                .from("Favorites")
+                .from("favorites")
                 .insert(outfit)
                 .execute()
 
@@ -141,27 +129,6 @@ enum SlotType {
     }
 }
 
-// MARK: - FitPick Colors
-
-extension Color {
-    static let fitPink   = Color(hex: "#E4568B")
-    static let fitYellow = Color(hex: "#F6C94D")
-    static let fitBlue   = Color(hex: "#A7C7E4")
-    static let fitGreen  = Color(hex: "#5D7B3D")
-    static let fitBlush  = Color(hex: "#F29BB9")
-    static let fitBrown  = Color(hex: "#7F5836")
-
-    init(hex: String) {
-        let hex = hex.trimmingCharacters(in: CharacterSet.alphanumerics.inverted)
-        var int: UInt64 = 0
-        Scanner(string: hex).scanHexInt64(&int)
-        let r = Double((int >> 16) & 0xFF) / 255
-        let g = Double((int >> 8)  & 0xFF) / 255
-        let b = Double( int        & 0xFF) / 255
-        self.init(red: r, green: g, blue: b)
-    }
-}
-
 // MARK: - Clothing Slot View
 
 struct ClothingSlotView: View {
@@ -172,10 +139,10 @@ struct ClothingSlotView: View {
 
     private var accentColor: Color {
         switch slot {
-        case .top:       return .fitPink
-        case .bottom:    return .fitYellow
-        case .shoes:     return .fitBlue
-        case .accessory: return .fitGreen
+        case .top:       return .sunsetPetal
+        case .bottom:    return .goldenPollen
+        case .shoes:     return .eveningSky
+        case .accessory: return .leaflitGreen
         }
     }
 
@@ -188,7 +155,7 @@ struct ClothingSlotView: View {
                             switch phase {
                             case .success(let image):
                                 image.resizable().scaledToFill()
-                            case .failure(_):
+                            case .failure:
                                 placeholderView
                             case .empty:
                                 ProgressView()
@@ -266,29 +233,34 @@ struct ClothingSlotView: View {
 
 // MARK: - Shuffle Page
 
-struct ShufflePage: View {
-    @StateObject private var vm: ShuffleViewModel
-
-    init(userId: Int) {
-        _vm = StateObject(wrappedValue: ShuffleViewModel(userId: userId))
-    }
+struct ShuffleView: View {
+    @EnvironmentObject var session: SessionManager
+    @StateObject private var vm = ShuffleViewModel(userId: 0)
 
     var body: some View {
         ZStack {
-            Color(hex: "#ffdee9").ignoresSafeArea()
+            Color(red: 1.0, green: 0.87, blue: 0.914).ignoresSafeArea()
 
             if vm.isLoading {
                 VStack(spacing: 16) {
-                    ProgressView().scaleEffect(1.4).tint(.fitPink)
+                    ProgressView().scaleEffect(1.4).tint(.sunsetPetal)
                     Text("Loading your wardrobe...")
                         .font(.subheadline)
-                        .foregroundColor(.fitPink)
+                        .foregroundColor(.sunsetPetal)
                 }
             } else {
                 mainContent
             }
         }
-        .task { await vm.loadClothing() }
+        // Title sits right beside the back button in the nav bar
+        .navigationTitle("FitPick")
+        .navigationBarTitleDisplayMode(.inline)
+        .toolbarBackground(Color(red: 1.0, green: 0.87, blue: 0.914), for: .navigationBar)
+        .toolbarBackground(.visible, for: .navigationBar)
+        .task {
+            vm.userId = session.userID ?? 0
+            await vm.loadClothing()
+        }
         .sheet(isPresented: $vm.showNameSheet) { nameSheet }
         .alert("Error", isPresented: Binding(
             get: { vm.errorMessage != nil },
@@ -300,13 +272,12 @@ struct ShufflePage: View {
         }
     }
 
-    // MARK: Name Sheet
     private var nameSheet: some View {
         VStack(spacing: 24) {
             Text("Name this outfit")
                 .font(.title2)
                 .fontWeight(.bold)
-                .foregroundColor(.fitBrown)
+                .foregroundColor(.cocoaBrown)
 
             TextField("e.g. Sunday Brunch", text: $vm.outfitName)
                 .textFieldStyle(.roundedBorder)
@@ -337,7 +308,7 @@ struct ShufflePage: View {
                 }
                 .frame(maxWidth: .infinity)
                 .padding()
-                .background(Color.fitGreen)
+                .background(Color.leaflitGreen)
                 .foregroundColor(.white)
                 .clipShape(RoundedRectangle(cornerRadius: 14))
                 .disabled(vm.isSaving)
@@ -348,79 +319,75 @@ struct ShufflePage: View {
         .presentationDetents([.height(220)])
     }
 
-    // MARK: Main Content
     private var mainContent: some View {
-        ScrollView {
-            VStack(spacing: 16) {
-                Text("FitPick")
-                    .font(.system(size: 36, weight: .bold, design: .rounded))
-                    .foregroundColor(.fitBrown)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .padding(.horizontal)
-                    .padding(.top, 16)
-
-                Text("Tap a slot to lock it, then reshuffle the rest")
-                    .font(.footnote)
-                    .foregroundColor(.secondary)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .padding(.horizontal)
-
-                VStack(spacing: 14) {
-                    ClothingSlotView(item: vm.currentTop, slot: .top, locked: vm.topLocked) {
-                        vm.toggleLock(for: .top)
-                    }
-                    ClothingSlotView(item: vm.currentBottom, slot: .bottom, locked: vm.bottomLocked) {
-                        vm.toggleLock(for: .bottom)
-                    }
-                    ClothingSlotView(item: vm.currentShoes, slot: .shoes, locked: vm.shoesLocked) {
-                        vm.toggleLock(for: .shoes)
-                    }
-                    ClothingSlotView(item: vm.currentAccessory, slot: .accessory, locked: vm.accessoryLocked) {
-                        vm.toggleLock(for: .accessory)
-                    }
-                }
+        VStack(spacing: 14) {
+            // Hint text just below nav bar
+            Text("Tap a slot to lock it, then reshuffle the rest")
+                .font(.footnote)
+                .foregroundColor(.secondary)
+                .frame(maxWidth: .infinity, alignment: .leading)
                 .padding(.horizontal)
+                .padding(.top, 8)
 
-                VStack(spacing: 12) {
-                    Button {
-                        withAnimation(.spring(response: 0.3, dampingFraction: 0.6)) {
-                            vm.shuffle()
-                        }
-                    } label: {
-                        Label("Shuffle", systemImage: "shuffle")
-                            .font(.headline)
-                            .frame(maxWidth: .infinity)
-                            .padding()
-                            .background(Color.fitPink)
-                            .foregroundColor(.white)
-                            .clipShape(RoundedRectangle(cornerRadius: 14))
+            // Clothing slots
+            VStack(spacing: 14) {
+                ClothingSlotView(item: vm.currentTop, slot: .top, locked: vm.topLocked) {
+                    vm.toggleLock(for: .top)
+                }
+                ClothingSlotView(item: vm.currentBottom, slot: .bottom, locked: vm.bottomLocked) {
+                    vm.toggleLock(for: .bottom)
+                }
+                ClothingSlotView(item: vm.currentShoes, slot: .shoes, locked: vm.shoesLocked) {
+                    vm.toggleLock(for: .shoes)
+                }
+                ClothingSlotView(item: vm.currentAccessory, slot: .accessory, locked: vm.accessoryLocked) {
+                    vm.toggleLock(for: .accessory)
+                }
+            }
+            .padding(.horizontal)
+
+            Spacer(minLength: 0)
+
+            // Buttons pinned to bottom
+            VStack(spacing: 10) {
+                Button {
+                    withAnimation(.spring(response: 0.3, dampingFraction: 0.6)) {
+                        vm.shuffle()
                     }
-
-                    Button { vm.showNameSheet = true } label: {
-                        Group {
-                            if vm.savedSuccess {
-                                Label("Saved!", systemImage: "checkmark").font(.headline)
-                            } else {
-                                Label("Save to Favorites", systemImage: "star.fill").font(.headline)
-                            }
-                        }
+                } label: {
+                    Label("Shuffle", systemImage: "shuffle")
+                        .font(.headline)
                         .frame(maxWidth: .infinity)
                         .padding()
-                        .background(vm.savedSuccess ? Color.fitGreen.opacity(0.7) : Color.fitGreen)
+                        .background(Color.sunsetPetal)
                         .foregroundColor(.white)
                         .clipShape(RoundedRectangle(cornerRadius: 14))
-                        .animation(.easeInOut(duration: 0.2), value: vm.savedSuccess)
-                    }
                 }
-                .padding(.horizontal)
-                .padding(.bottom, 40)
+
+                Button { vm.showNameSheet = true } label: {
+                    Group {
+                        if vm.savedSuccess {
+                            Label("Saved!", systemImage: "checkmark").font(.headline)
+                        } else {
+                            Label("Save to Favorites", systemImage: "star.fill").font(.headline)
+                        }
+                    }
+                    .frame(maxWidth: .infinity)
+                    .padding()
+                    .background(vm.savedSuccess ? Color.leaflitGreen.opacity(0.7) : Color.leaflitGreen)
+                    .foregroundColor(.white)
+                    .clipShape(RoundedRectangle(cornerRadius: 14))
+                    .animation(.easeInOut(duration: 0.2), value: vm.savedSuccess)
+                }
             }
+            .padding(.horizontal)
+            .padding(.bottom, 24)
         }
     }
 }
 
-// MARK: - Preview
-
 #Preview {
-    ShufflePage(userId: 1)
+    NavigationStack {
+        ShuffleView().environmentObject(SessionManager())
+    }
 }
